@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import Icon from '@/components/ui/icon';
 
 interface Message {
@@ -19,18 +19,45 @@ interface Contact {
   avatar: string;
 }
 
+function speakHacker(text: string) {
+  if (!('speechSynthesis' in window)) return;
+  window.speechSynthesis.cancel();
+  const utter = new SpeechSynthesisUtterance(text);
+  utter.lang = 'ru-RU';
+  utter.rate = 0.75;
+  utter.pitch = 0.3;
+  utter.volume = 0.9;
+  const voices = window.speechSynthesis.getVoices();
+  const ruMale = voices.find(v => v.lang.startsWith('ru') && v.name.toLowerCase().includes('male'))
+    || voices.find(v => v.lang.startsWith('ru'))
+    || voices[0];
+  if (ruMale) utter.voice = ruMale;
+  window.speechSynthesis.speak(utter);
+}
+
+const BOT_REPLIES = [
+  'Чё надо, блин? Сообщение принял, не парься 🔒',
+  'Ёпта, канал чистый, базарь спокойно',
+  'Ну ты даёшь, братан. Ладно, принял инфу.',
+  'Хорош писать хрень, давай по делу. Шифрование пашет.',
+  'Бля, понял тебя. Следов нет, всё чисто, не ссы.',
+  'Йо, дошло. Канал защищён нахер, расслабься.',
+  'Чё ты как маленький, всё ок. E2E работает, базара нет.',
+  'Принял, ёпт. Логов ноль, мы призраки тут.',
+];
+
 const DEMO_CONTACTS: Contact[] = [
-  { id: 1, name: 'Призрак_7842', lastMsg: 'Всё чисто, до связи', time: '23:14', online: true, unread: 2, avatar: '👤' },
-  { id: 2, name: 'Тень_0019', lastMsg: 'Понял тебя', time: '22:58', online: false, avatar: '🕶️' },
-  { id: 3, name: 'X_Shadow', lastMsg: 'Никаких следов', time: '21:30', online: true, avatar: '🌑' },
-  { id: 4, name: 'Anon_442', lastMsg: 'Шифр получен', time: '20:05', online: false, avatar: '🎭' },
+  { id: 1, name: 'Призрак_7842', lastMsg: 'Блин, всё чисто, до связи', time: '23:14', online: true, unread: 2, avatar: '👤' },
+  { id: 2, name: 'Тень_0019', lastMsg: 'Ёпта, понял тебя', time: '22:58', online: false, avatar: '🕶️' },
+  { id: 3, name: 'X_Shadow', lastMsg: 'Нахер следы, всё подчищено', time: '21:30', online: true, avatar: '🌑' },
+  { id: 4, name: 'Anon_442', lastMsg: 'Шифр получен, бро', time: '20:05', online: false, avatar: '🎭' },
 ];
 
 const DEMO_MESSAGES: Message[] = [
-  { id: 1, text: 'Соединение установлено. Канал зашифрован.', out: false, time: '22:50', status: 'read' },
+  { id: 1, text: 'Ёпта, соединение встало. Канал зашифрован нахер.', out: false, time: '22:50', status: 'read' },
   { id: 2, text: 'Понял, жду данные', out: true, time: '22:51', status: 'read' },
-  { id: 3, text: 'Данные отправлены. E2E шифрование активно. Никаких логов.', out: false, time: '22:53', status: 'read' },
-  { id: 4, text: 'Отлично. Всё чисто, до связи', out: false, time: '23:14', status: 'sent' },
+  { id: 3, text: 'Блин, данные ушли. E2E пашет, логов нет, расслабься.', out: false, time: '22:53', status: 'read' },
+  { id: 4, text: 'Хорош, всё чисто. До связи, братан.', out: false, time: '23:14', status: 'sent' },
 ];
 
 export default function ChatScreen() {
@@ -41,8 +68,16 @@ export default function ChatScreen() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    window.speechSynthesis.getVoices();
+  }, []);
+
+  useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, activeContact]);
+
+  const speakIncoming = useCallback((text: string) => {
+    speakHacker(text);
+  }, []);
 
   const sendMessage = () => {
     if (!input.trim()) return;
@@ -56,19 +91,17 @@ export default function ChatScreen() {
     setMessages(prev => [...prev, newMsg]);
     setInput('');
 
+    speakHacker(input);
+
     setTimeout(() => {
-      const replies = [
-        'Сообщение получено 🔒',
-        'Канал защищён, продолжай',
-        'Никаких следов. Понял тебя.',
-        'E2E активно. Всё чисто.',
-      ];
+      const reply = BOT_REPLIES[Math.floor(Math.random() * BOT_REPLIES.length)];
       setMessages(prev => [...prev, {
         id: Date.now() + 1,
-        text: replies[Math.floor(Math.random() * replies.length)],
+        text: reply,
         out: false,
         time: new Date().toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' }),
       }]);
+      setTimeout(() => speakIncoming(reply), 300);
     }, 1200);
   };
 
