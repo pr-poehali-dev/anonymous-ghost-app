@@ -1,5 +1,6 @@
-import { useState } from 'react';
-import Icon from '@/components/ui/icon';
+import { useState, useRef } from 'react';
+
+const API_URL = 'https://functions.poehali.dev/e4bb05aa-6929-48b2-93df-581290a17bee';
 
 interface AuthScreenProps {
   onAuth: (username: string) => void;
@@ -10,12 +11,26 @@ export default function AuthScreen({ onAuth }: AuthScreenProps) {
   const [step, setStep] = useState<'credentials' | '2fa'>('credentials');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [code, setCode] = useState('');
+  const [email, setEmail] = useState('');
+  const [digits, setDigits] = useState<string[]>(['', '', '', '', '', '']);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
 
-  const handleSubmit = () => {
-    if (!username.trim() || !password.trim()) {
+  const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  const startCooldown = () => {
+    setResendCooldown(60);
+    const t = setInterval(() => {
+      setResendCooldown(prev => {
+        if (prev <= 1) { clearInterval(t); return 0; }
+        return prev - 1;
+      });
+    }, 1000);
+  };
+
+  const handleSubmit = async () => {
+    if (!username.trim() || !password.trim() || !email.trim()) {
       setError('Заполните все поля');
       return;
     }
@@ -23,24 +38,153 @@ export default function AuthScreen({ onAuth }: AuthScreenProps) {
       setError('Пароль минимум 6 символов');
       return;
     }
+    if (!email.includes('@')) {
+      setError('Введите корректный email');
+      return;
+    }
     setError('');
     setLoading(true);
-    setTimeout(() => {
+    try {
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'send', email: email.trim().toLowerCase() }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setStep('2fa');
+        startCooldown();
+      } else {
+        setError(data.error || 'Ошибка отправки кода');
+      }
+    } catch {
+      setError('Ошибка соединения. Проверьте интернет.');
+    } finally {
       setLoading(false);
-      setStep('2fa');
-    }, 900);
+    }
   };
 
-  const handle2FA = () => {
-    if (code.length < 4) {
-      setError('Введите код подтверждения');
+  const handleResend = async () => {
+    if (resendCooldown > 0) return;
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'send', email: email.trim().toLowerCase() }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        startCooldown();
+        setDigits(['', '', '', '', '', '']);
+        inputRefs.current[0]?.focus();
+      } else {
+        setError(data.error || 'Ошибка отправки');
+      }
+    } catch {
+      setError('Ошибка соединения');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handle2FA = async () => {
+    const code = digits.join('');
+    if (code.length < 6) {
+      setError('Введите все 6 цифр кода');
       return;
     }
     setLoading(true);
-    setTimeout(() => {
+    setError('');
+    try {
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'verify', email: email.trim().toLowerCase(), code }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        onAuth(username.trim() || 'Призрак_' + Math.floor(Math.random() * 9999));
+      } else {
+        setError(data.error || 'Неверный код');
+        setDigits(['', '', '', '', '', '']);
+        inputRefs.current[0]?.focus();
+      }
+    } catch {
+      setError('Ошибка соединения');
+    } finally {
       setLoading(false);
-      onAuth(username || 'Призрак_' + Math.floor(Math.random() * 9999));
-    }, 700);
+    }
+  };
+
+  const handleDigitChange = (index: number, value: string) => {
+    const digit = value.replace(/\D/g, '').slice(-1);
+    const newDigits = [...digits];
+    newDigits[index] = digit;
+    setDigits(newDigits);
+    setError('');
+    if (digit && index < 5) {
+      inputRefs.current[index + 1]?.focus();
+    }
+    if (newDigits.every(d => d !== '') && digit) {
+      setTimeout(() => {
+        const code = newDigits.join('');
+        if (code.length === 6) handle2FAWithCode(newDigits);
+      }, 100);
+    }
+  };
+
+  const handle2FAWithCode = async (digs: string[]) => {
+    const code = digs.join('');
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch(API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'verify', email: email.trim().toLowerCase(), code }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        onAuth(username.trim() || 'Призрак_' + Math.floor(Math.random() * 9999));
+      } else {
+        setError(data.error || 'Неверный код');
+        setDigits(['', '', '', '', '', '']);
+        inputRefs.current[0]?.focus();
+      }
+    } catch {
+      setError('Ошибка соединения');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDigitKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Backspace') {
+      if (digits[index] === '' && index > 0) {
+        inputRefs.current[index - 1]?.focus();
+      } else {
+        const newDigits = [...digits];
+        newDigits[index] = '';
+        setDigits(newDigits);
+      }
+    } else if (e.key === 'Enter') {
+      handle2FA();
+    }
+  };
+
+  const handlePaste = (e: React.ClipboardEvent) => {
+    e.preventDefault();
+    const pasted = e.clipboardData.getData('text').replace(/\D/g, '').slice(0, 6);
+    if (pasted.length > 0) {
+      const newDigits = [...digits];
+      pasted.split('').forEach((d, i) => { newDigits[i] = d; });
+      setDigits(newDigits);
+      const nextEmpty = newDigits.findIndex(d => d === '');
+      const focusIdx = nextEmpty === -1 ? 5 : nextEmpty;
+      inputRefs.current[focusIdx]?.focus();
+    }
   };
 
   return (
@@ -96,6 +240,19 @@ export default function AuthScreen({ onAuth }: AuthScreenProps) {
               </div>
               <div>
                 <label className="text-xs font-mono mb-1 block" style={{ color: 'var(--ghost-cyan)', opacity: 0.7 }}>
+                  EMAIL (для 2FA кода)
+                </label>
+                <input
+                  type="email"
+                  className="ghost-input"
+                  placeholder="your@email.com"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+                />
+              </div>
+              <div>
+                <label className="text-xs font-mono mb-1 block" style={{ color: 'var(--ghost-cyan)', opacity: 0.7 }}>
                   ПАРОЛЬ
                 </label>
                 <input
@@ -126,50 +283,50 @@ export default function AuthScreen({ onAuth }: AuthScreenProps) {
                 boxShadow: loading ? 'none' : '0 0 20px var(--ghost-cyan-dim)'
               }}
             >
-              {loading ? '⠿ Проверка...' : mode === 'login' ? '→ ВОЙТИ' : '→ СОЗДАТЬ АККАУНТ'}
+              {loading ? '⠿ Отправляем код...' : mode === 'login' ? '→ ВОЙТИ' : '→ СОЗДАТЬ АККАУНТ'}
             </button>
 
             <p className="text-center text-xs font-mono" style={{ color: '#444' }}>
-              Данные хранятся только на устройстве
+              Код 2FA будет отправлен на email
             </p>
           </div>
         ) : (
           <div className="ghost-card p-6 space-y-5 animate-fade-in">
             <div className="text-center">
-              <div className="text-4xl mb-3">🔐</div>
-              <h3 className="font-mono text-sm" style={{ color: 'var(--ghost-cyan)' }}>
+              <div className="text-4xl mb-3">📧</div>
+              <h3 className="font-mono text-sm font-semibold" style={{ color: 'var(--ghost-cyan)' }}>
                 ДВУХФАКТОРНАЯ АУТЕНТИФИКАЦИЯ
               </h3>
-              <p className="text-xs text-gray-500 mt-1 font-mono">
-                Биометрия подтверждена. Введите код из приложения
+              <p className="text-xs text-gray-500 mt-2 font-mono leading-relaxed">
+                Код отправлен на<br />
+                <span style={{ color: '#c8c8c8' }}>{email}</span>
               </p>
             </div>
 
-            <div className="flex gap-2 justify-center">
-              {[0,1,2,3,4,5].map(i => (
-                <div
+            <div className="flex gap-2 justify-center" onPaste={handlePaste}>
+              {digits.map((digit, i) => (
+                <input
                   key={i}
-                  className="w-10 h-12 flex items-center justify-center rounded-lg text-xl font-mono font-bold"
+                  ref={el => { inputRefs.current[i] = el; }}
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={1}
+                  value={digit}
+                  onChange={e => handleDigitChange(i, e.target.value)}
+                  onKeyDown={e => handleDigitKeyDown(i, e)}
+                  className="w-11 h-14 text-center rounded-xl text-2xl font-mono font-bold outline-none transition-all"
                   style={{
-                    background: code[i] ? 'rgba(0,255,245,0.15)' : 'var(--surface-3)',
-                    border: `1px solid ${code[i] ? 'var(--ghost-cyan-glow)' : 'var(--surface-4)'}`,
+                    background: digit ? 'rgba(0,255,245,0.12)' : 'var(--surface-3)',
+                    border: `2px solid ${digit ? 'var(--ghost-cyan)' : 'var(--surface-4)'}`,
                     color: 'var(--ghost-cyan)',
-                    transition: 'all 0.2s'
+                    boxShadow: digit ? '0 0 12px rgba(0,255,245,0.2)' : 'none',
+                    caretColor: 'transparent',
                   }}
-                >
-                  {code[i] ? '●' : ''}
-                </div>
+                  onFocus={e => (e.target.style.borderColor = 'var(--ghost-cyan-glow)')}
+                  onBlur={e => (e.target.style.borderColor = digit ? 'var(--ghost-cyan)' : 'var(--surface-4)')}
+                />
               ))}
             </div>
-
-            <input
-              className="ghost-input text-center tracking-widest text-lg"
-              placeholder="Код 2FA"
-              value={code}
-              maxLength={6}
-              onChange={e => { setCode(e.target.value.replace(/\D/g,'')); setError(''); }}
-              onKeyDown={e => e.key === 'Enter' && handle2FA()}
-            />
 
             {error && (
               <p className="text-xs font-mono text-center" style={{ color: 'var(--ghost-red)' }}>
@@ -179,23 +336,36 @@ export default function AuthScreen({ onAuth }: AuthScreenProps) {
 
             <button
               onClick={handle2FA}
-              disabled={loading}
-              className="w-full py-3 rounded-lg font-mono text-sm transition-all"
+              disabled={loading || digits.some(d => d === '')}
+              className="w-full py-3 rounded-lg font-mono text-sm transition-all font-semibold"
               style={{
-                background: 'linear-gradient(135deg, rgba(0,255,245,0.25), rgba(0,255,245,0.1))',
+                background: (loading || digits.some(d => d === ''))
+                  ? 'rgba(0,255,245,0.05)'
+                  : 'linear-gradient(135deg, rgba(0,255,245,0.25), rgba(0,255,245,0.1))',
                 border: '1px solid var(--ghost-cyan-glow)',
                 color: 'var(--ghost-cyan)',
+                boxShadow: loading ? 'none' : '0 0 20px var(--ghost-cyan-dim)'
               }}
             >
-              {loading ? '⠿ Проверка...' : '🔓 ПОДТВЕРДИТЬ'}
+              {loading ? '⠿ Проверяем...' : '🔓 ПОДТВЕРДИТЬ'}
             </button>
 
-            <button
-              onClick={() => { setStep('credentials'); setCode(''); setError(''); }}
-              className="w-full text-xs font-mono text-gray-500 hover:text-gray-300 transition-colors"
-            >
-              ← Назад
-            </button>
+            <div className="flex items-center justify-between">
+              <button
+                onClick={() => { setStep('credentials'); setDigits(['','','','','','']); setError(''); }}
+                className="text-xs font-mono text-gray-500 hover:text-gray-300 transition-colors"
+              >
+                ← Назад
+              </button>
+              <button
+                onClick={handleResend}
+                disabled={resendCooldown > 0 || loading}
+                className="text-xs font-mono transition-colors"
+                style={{ color: resendCooldown > 0 ? '#444' : 'var(--ghost-cyan)' }}
+              >
+                {resendCooldown > 0 ? `Повторно через ${resendCooldown}с` : 'Отправить снова'}
+              </button>
+            </div>
           </div>
         )}
       </div>
